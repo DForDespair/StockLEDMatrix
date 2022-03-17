@@ -1,8 +1,16 @@
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
+from audioop import add
+from datetime import datetime
+from io import BytesIO
 import json
 import os
 import requests
+from cache import StockCache
 import exceptions as ex
+from filehandler import LogoHandler
+from PIL import Image
+
+from stock import Stock
 
 
 class IIEXDataReceiver(ABC):
@@ -13,14 +21,6 @@ class IIEXDataReceiver(ABC):
     def fetch(self) -> json:
         pass
 
-    @abstractmethod
-    def add_tickers(self, tickers: list(str)) -> None:
-        pass
-
-    @abstractmethod
-    def get_tickers(self) -> list(str):
-        pass
-
 
 class IEXStockReceiver(IIEXDataReceiver):
     """Gathers stock data from IEXCloud
@@ -28,104 +28,81 @@ class IEXStockReceiver(IIEXDataReceiver):
     Args:
         IDataReceiver (_type_): _description_
     """
-    _API_BASE = "https://cloud.iexapis.com/"
+    _API_BASE = "https://cloud.iexapis.com"
     _SANDBOX_BASE = "https://sandbox.iexapis.com"
-    _TICKERS: list(str)
-    _BATCHURL = _API_BASE + "stock/market/batch?symbols="
+    _TICKERS: list
+    _BATCHURL = "stock/market/batch?symbols="
 
-    def __init__(self, API_KEY=None, version="stable"):
-        self._API_KEY = API_KEY or os.environ.get("API_KEY")
-        if not self._API_KEY:
-            raise ex.TokenNotFound("Token is not found")
+    def __init__(self, tickers: list, API_KEY, version="sandbox"):
+        self._API_KEY = API_KEY
         if version not in (["stable", "v1", "beta", "sandbox"]):
             raise ex.VersionNotFound(
                 "Version must be one of following: stable, v1, sandbox or beta"
             )
         self._version = version
-
-    def fetch(self) -> json:
-        batch_request = self._API_BASE + self._BATCHURL.join([
-            ticker + "," for ticker in self.get_tickers()
-        ]) + "&types=quote?token=" + self._API_KEY
-        if self._version == "sandbox":
-            batch_request = self._SANDBOX_BASE + self._BATCHURL.join([
-                ticker + "," for ticker in self.get_tickers()
-            ]) + "&types=quote?token=" + self._API_KEY
-
-        try:
-            request = requests.get(batch_request)
-            return json.loads(request)
-        except requests.exceptions.Timeout:
-            pass
-        except requests.exceptions.TooManyRedirects:
-            raise ex.TooManyRequests("Redirected too many times")
-        except requests.exceptions.RequestException:
-            pass
-
-    def add_tickers(self, tickers) -> list(str):
-        if len(tickers) <= 1:
-            raise ex.NoSymbol("Not enough tickers. Please try more than 1")
-        elif len(tickers) >= 100:
-            raise ex.TooManyTickers(
-                "You have entered too many tickers. please enter between 1 and 100"
-            )
         self._TICKERS = tickers
 
-    @get_tickers.getter
-    def get_tickers(self) -> list(str):
-        return self._TICKERS
+    def fetch(self) -> json:
+        sep_tickers = ",".join([ticker for ticker in self._TICKERS])
+        batch_request = f"{self._API_BASE}/{self._version}/{self._BATCHURL}{sep_tickers}&types=quote&token={self._API_KEY}"
+        if self._version == "sandbox":
+            batch_request = f"{self._SANDBOX_BASE}/stable/{self._BATCHURL}{sep_tickers}&types=quote&token={self._API_KEY}"
+        try:
+            print('Receiving quotes')
+            request = requests.get(batch_request)
+            request.raise_for_status()
+            return request.json()
+        except requests.exceptions.HTTPError:
+            raise ex.NotFound("Not found")
 
 
 class IEXLogoReceiver(IIEXDataReceiver):
 
-    _API_BASE = "https://cloud.iexapis.com/"
-    _SANDBOX_BASE = "https://sandbox.iexapis.com"
-    _TICKERS: list(str)
-
-    def __init__(self, API_KEY=None, version="stable"):
-        self._API_KEY = API_KEY or os.environ.get("API_KEY")
-        if not self._API_KEY:
-            raise ex.TokenNotFound("Token is not found")
-        if version not in (["stable", "v1", "beta", "sandbox"]):
-            raise ex.VersionNotFound(
-                "Version must be one of following: stable, v1, sandbox or beta"
-            )
-        self._version = version
-
-    @add_tickers.setter
-    def add_tickers(self, tickers):
-        if len(tickers) <= 1:
-            raise ex.NoSymbol("Not enough tickers. Please try more than 1")
-        elif len(tickers) >= 100:
-            raise ex.TooManyTickers(
-                "You have entered too many tickers. please enter between 1 and 100"
-            )
+    def __init__(self, tickers: list):
         self._TICKERS = tickers
+        self.logo_names = [x.split(".")[0] for x in os.listdir("./images")]
 
-    @get_tickers.getter
-    def get_tickers(self):
-        return self._TICKERS
+    def fetch(self):
+        base_url = "https://storage.googleapis.com/iex/api/logos/"
 
-    def fetch(self) -> json:
-        batch_request = self._API_BASE + self._BATCHURL.join([
-            ticker + "," for ticker in self.get_tickers()
-        ]) + "&types=quote?token=" + self._API_KEY
-        if self._version == "sandbox":
-            batch_request = self._SANDBOX_BASE + self._BATCHURL.join([
-                ticker + "," for ticker in self.get_tickers()
-            ]) + "&types=quote?token=" + self._API_KEY
+        for ticker in self._TICKERS:
             try:
-                request = requests.get(batch_request)
-                return json.loads(request)
-            except requests.exceptions.Timeout:
-                pass
-            except requests.exceptions.TooManyRedirects:
-                raise ex.TooManyRequests("Redirected too many times")
-            except requests.exceptions.RequestException:
-                pass
+
+                print('Receiving image.')
+                request = requests.get(base_url + ticker + ".png", stream=True)
+                request.raise_for_status()
+                filename = ("./images/" + ticker + '.bmp')
+                image = Image.open(BytesIO(request.content))
+                image.save(filename)
+            except requests.exceptions.HTTPError as e:
+                continue
 
 
 class IEXDataFactory():
 
-    def get_data(self, type):
-        pass
+    def stock_receiver(self, tickers, API_KEY, version) -> IIEXDataReceiver:
+        return IEXStockReceiver(tickers, API_KEY, version)
+
+    def logo_receiver(self, tickers) -> IIEXDataReceiver:
+        return IEXLogoReceiver(tickers, )
+
+
+class StockDataHandler():
+
+    def __init__(self):
+        self.stocks = StockCache()
+
+    def read_quote(self, stockQuote: json) -> None:
+        for ticker, quote in stockQuote.items():
+            price = quote['quote']['iexRealtimePrice']
+            change = quote['quote']['change']
+            percentChange = quote['quote']['changePercent'] * 100
+            timestamp = datetime.fromtimestamp(
+                float(quote['quote']['iexLastUpdated']) / 1000)
+            if self.stocks.tryGet(ticker):
+                stock = self.stocks.get_stocks()[ticker]
+                self.stocks.update(price, change, percentChange, stock,
+                                   timestamp)
+            else:
+                self.stocks.add(ticker, price, change, percentChange,
+                                timestamp)
