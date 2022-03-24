@@ -7,7 +7,7 @@ import os
 import requests
 from cache import StockCache
 import exceptions as ex
-from filehandler import LogoHandler
+from handler import LogoDataHandler
 from PIL import Image
 
 from stock import Stock
@@ -23,11 +23,16 @@ class IIEXDataReceiver(ABC):
 
 
 class IEXStockReceiver(IIEXDataReceiver):
-    """Gathers stock data from IEXCloud
-
-    Args:
-        IDataReceiver (_type_): _description_
     """
+
+    Raises:
+        ex.VersionNotFound: _description_
+        ex.NotFound: _description_
+
+    Returns:
+        JSON: returns a batch quote request from IEX Cloud in JSON format
+    """
+
     _API_BASE = "https://cloud.iexapis.com"
     _SANDBOX_BASE = "https://sandbox.iexapis.com"
     _TICKERS: list
@@ -60,22 +65,25 @@ class IEXLogoReceiver(IIEXDataReceiver):
 
     def __init__(self, tickers: list):
         self._TICKERS = tickers
-        self.logo_names = [x.split(".")[0] for x in os.listdir("./images")]
 
-    def fetch(self):
+    def fetch(self) -> dict:
         base_url = "https://storage.googleapis.com/iex/api/logos/"
-
+        images = {}
         for ticker in self._TICKERS:
             try:
-
-                print('Receiving image.')
-                request = requests.get(base_url + ticker + ".png", stream=True)
+                print(f'Receiving image for {ticker}.')
+                request = requests.get(base_url + ticker.upper() + ".png",
+                                       stream=True)
+                print(request.status_code)
                 request.raise_for_status()
-                filename = ("./images/" + ticker + '.bmp')
-                image = Image.open(BytesIO(request.content))
-                image.save(filename)
+                if request.status_code == 200:
+                    image = Image.open(BytesIO(request.content))
+                    images[ticker] = image
             except requests.exceptions.HTTPError as e:
+                print(f"{ticker} logo does not exist:")
                 continue
+        print(images)
+        return images
 
 
 class IEXDataFactory():
@@ -84,25 +92,4 @@ class IEXDataFactory():
         return IEXStockReceiver(tickers, API_KEY, version)
 
     def logo_receiver(self, tickers) -> IIEXDataReceiver:
-        return IEXLogoReceiver(tickers, )
-
-
-class StockDataHandler():
-
-    def __init__(self):
-        self.stocks = StockCache()
-
-    def read_quote(self, stockQuote: json) -> None:
-        for ticker, quote in stockQuote.items():
-            price = quote['quote']['iexRealtimePrice']
-            change = quote['quote']['change']
-            percentChange = quote['quote']['changePercent'] * 100
-            timestamp = datetime.fromtimestamp(
-                float(quote['quote']['iexLastUpdated']) / 1000)
-            if self.stocks.tryGet(ticker):
-                stock = self.stocks.get_stocks()[ticker]
-                self.stocks.update(price, change, percentChange, stock,
-                                   timestamp)
-            else:
-                self.stocks.add(ticker, price, change, percentChange,
-                                timestamp)
+        return IEXLogoReceiver(tickers)
