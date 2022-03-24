@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from io import BytesIO
 from xmlrpc.client import boolean
 from stock import Stock
 from dataclasses import dataclass, field
+from PIL import Image
 
 
 class ICache(ABC):
@@ -20,9 +22,9 @@ class ICache(ABC):
 class StockCache(ICache):
     stocks: dict = field(default_factory=dict)
 
-    def add(self, name: str, price: float, change: float, percentChange: float,
-            time: datetime) -> None:
-        stock = Stock(name, price, change, percentChange, time)
+    def add(self, ticker: str, price: float, change: float,
+            percentChange: float, time: datetime) -> None:
+        stock = Stock(ticker, price, change, percentChange, time)
         self.stocks[stock.ticker] = stock
 
     def tryGet(self, ticker: str) -> boolean:
@@ -41,12 +43,16 @@ class StockCache(ICache):
         return self.stocks
 
 
-class IImageCache(ICache):
+@dataclass
+class LogoCache(ICache):
+    logos: dict = field(default_factory=dict)
 
-    @abstractmethod
-    def add(self, ticker, filename):
-        pass
+    def add(self, ticker: str, logo: Image):
+        self.logos[ticker] = logo
 
-    @abstractmethod
-    def tryGet(self, ke):
-        pass
+    def tryGet(self, ticker: str) -> boolean:
+        logo = True if ticker in self.logos.keys() else False
+        return logo
+
+    def get_logos(self) -> dict:
+        return self.logos
