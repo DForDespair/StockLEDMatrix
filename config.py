@@ -1,6 +1,6 @@
 config = {
     'sandboxKey':
-    r'Tsk_0c13a792b3984153a0aa281086d284f9',
+    r'<INSERT API KEY HERE>',
     'apiKey':
     r'<INSERT API KEY HERE>',
     'tickers': [
